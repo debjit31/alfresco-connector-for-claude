@@ -1,0 +1,66 @@
+server:
+  port: 3000
+
+spring:
+  application:
+    name: alfresco-mcp-server
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+# ── Alfresco connection ──────────────────────────────────────────────
+alfresco:
+  base-url: http://localhost:8080/alfresco
+  rest-api-path: /api/-default-/public/alfresco/versions/1
+  search-api-path: /api/-default-/public/search/versions/1
+  auth:
+    type: basic                 # basic | oauth2 (extensible)
+    username: admin
+    password: admin
+  client:
+    connect-timeout-ms: 5000
+    read-timeout-ms: 30000
+    max-in-memory-size-mb: 16   # for large document downloads
+  upload:
+    max-file-size-mb: 100
+
+# ── MCP server metadata ─────────────────────────────────────────────
+mcp:
+  server:
+    name: alfresco-mcp-server
+    version: 1.0.0
+    description: "MCP server exposing Alfresco ECM capabilities as AI-callable tools"
+
+# ── Logging ──────────────────────────────────────────────────────────
+logging:
+  level:
+    com.example.alfresco.mcp: DEBUG
+    org.springframework.web.reactive.function.client: DEBUG
+  pattern:
+    console: "%d{ISO8601} [%thread] %-5level %logger{36} - %msg%n"
+
+# ── Actuator ─────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+# ── SpringDoc / Swagger UI ───────────────────────────────────────────
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    tags-sorter: alpha
+    operations-sorter: method
+    display-request-duration: true
+    try-it-out-enabled: true
+    filter: true
+    doc-expansion: list
+  show-actuator: false
+  default-produces-media-type: application/json
+  default-consumes-media-type: application/json

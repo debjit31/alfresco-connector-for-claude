@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  # ── Alfresco MCP Server ────────────────────────────────────────
+  alfresco-mcp:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      ALFRESCO_BASE_URL: http://alfresco:8080/alfresco
+      ALFRESCO_AUTH_USERNAME: admin
+      ALFRESCO_AUTH_PASSWORD: admin
+      SERVER_PORT: 3000
+    depends_on:
+      - alfresco
+    networks:
+      - alfresco-net
+
+  # ── Alfresco Community (if you don't have one running) ─────────
+  # Uncomment the block below to spin up Alfresco locally.
+  # If you already have Alfresco at localhost:8080, just run the
+  # alfresco-mcp service and set ALFRESCO_BASE_URL accordingly.
+  #
+  # alfresco:
+  #   image: alfresco/alfresco-content-repository-community:23.2
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     JAVA_OPTS: >-
+  #       -Ddb.driver=org.postgresql.Driver
+  #       -Ddb.url=jdbc:postgresql://postgres:5432/alfresco
+  #       -Ddb.username=alfresco
+  #       -Ddb.password=alfresco
+  #   depends_on:
+  #     - postgres
+  #   networks:
+  #     - alfresco-net
+  #
+  # postgres:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     POSTGRES_DB: alfresco
+  #     POSTGRES_USER: alfresco
+  #     POSTGRES_PASSWORD: alfresco
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   networks:
+  #     - alfresco-net
+
+networks:
+  alfresco-net:
+    driver: bridge
+
+# volumes:
+#   pgdata:
