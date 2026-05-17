@@ -287,56 +287,222 @@ curl -s -X POST http://localhost:3000/mcp \
 
 ---
 
-## Connecting to Claude Code
+## Connecting to Local Claude
 
-### Option A: SSE Transport (recommended)
+Your MCP server exposes two transport endpoints that Claude can connect to:
 
-Claude Code connects via the SSE endpoint. Add this to your Claude Code MCP config:
+| Transport | Endpoint | Notes |
+|-----------|----------|-------|
+| **SSE** | `http://localhost:3000/mcp/sse` | Works with Claude Code and Claude Desktop (via bridge) |
+| **HTTP (Streamable)** | `http://localhost:3000/mcp` | Recommended by the current MCP spec for Claude Code |
 
-**File: `~/.claude/claude_desktop_config.json`**
+> **Prerequisite:** Make sure the MCP server is already running (`mvn spring-boot:run`)
+> before connecting Claude. Verify with `curl http://localhost:3000/mcp`.
+
+---
+
+### Option 1: Claude Code (Terminal CLI) — Direct Connection
+
+Claude Code supports SSE and HTTP transports natively. No bridge or proxy needed.
+
+**Add via the CLI** (run this in a regular terminal, not inside a Claude Code session):
+
+```bash
+# SSE transport (uses /mcp/sse)
+claude mcp add --transport sse alfresco-ecm http://localhost:3000/mcp/sse
+
+# OR HTTP transport (uses POST /mcp — newer spec-recommended option)
+claude mcp add --transport http alfresco-ecm http://localhost:3000/mcp
+```
+
+Pick one of the two; both work. Then verify the registration:
+
+```bash
+claude mcp list
+```
+
+You should see `alfresco-ecm` listed. Now launch Claude Code:
+
+```bash
+claude
+```
+
+Inside the session, type `/mcp` to confirm the server shows as **connected** and all 5
+tools are discovered. Then just talk naturally — Claude calls the right tools automatically.
+
+**Scope options** — the default scope is `local` (current project only). For broader access:
+
+```bash
+# Available across ALL your projects (user-level)
+claude mcp add --transport sse --scope user alfresco-ecm http://localhost:3000/mcp/sse
+
+# Shared with your team via .mcp.json committed to git (project-level)
+claude mcp add --transport sse --scope project alfresco-ecm http://localhost:3000/mcp/sse
+```
+
+**Alternative: edit the config JSON directly** instead of using the CLI wizard.
+
+Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
-    "alfresco": {
+    "alfresco-ecm": {
+      "type": "sse",
       "url": "http://localhost:3000/mcp/sse"
     }
   }
 }
 ```
 
-### Option B: Streamable HTTP Transport
-
-For the direct JSON-RPC endpoint:
+Or for HTTP transport:
 
 ```json
 {
   "mcpServers": {
-    "alfresco": {
-      "url": "http://localhost:3000/mcp",
-      "transport": "http"
+    "alfresco-ecm": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
 ```
 
-### How Claude Discovers Tools
+**Removing the server later:**
 
-1. Claude Code connects to the MCP server
-2. Sends `initialize` to handshake
-3. Sends `tools/list` to discover available tools
-4. Claude sees tools with descriptions and input schemas
-5. When the user asks about documents, Claude calls the appropriate tool
+```bash
+claude mcp remove alfresco-ecm
+```
 
-### Example Prompts for Claude
+---
 
-Once connected, try:
+### Option 2: Claude Desktop (GUI App) — Via `mcp-remote` Bridge
 
-- "Search Alfresco for budget reports"
-- "Show me what's in the shared folder"
-- "Get the content of document [nodeId]"
-- "Upload these meeting notes to my home folder"
-- "What metadata does document [nodeId] have?"
+Claude Desktop only speaks **stdio** to local MCP servers — it cannot call HTTP or SSE
+endpoints directly. The [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) npm
+package acts as a bridge: Claude Desktop spawns it as a stdio process, and it forwards
+all JSON-RPC messages to your server over SSE.
+
+**Prerequisites:** Node.js 18+ installed and `npx` available on your system PATH.
+
+**Step 1 — Open your Claude Desktop config file:**
+
+| OS | Config file path |
+|----|------------------|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Linux | `~/.config/Claude/claude_desktop_config.json` |
+
+You can also open it from inside Claude Desktop: **Settings → Developer → Edit Config**.
+
+**Step 2 — Add this entry** and save:
+
+```json
+{
+  "mcpServers": {
+    "alfresco-ecm": {
+      "command": "npx",
+      "args": [
+        "mcp-remote@latest",
+        "http://localhost:3000/mcp/sse"
+      ]
+    }
+  }
+}
+```
+
+**Step 3 — Restart Claude Desktop completely.**
+
+On macOS: `Cmd+Q` (not just close the window).
+On Windows: right-click the system tray icon → Quit, then reopen.
+
+**Step 4 — Verify the connection.**
+
+Open a new chat. You should see a **hammer icon (🔨)** at the bottom of the input box
+with a number showing how many tools are available. Click it to confirm the 5 Alfresco
+tools appear in the list. Then ask Claude something like "Search Alfresco for recent
+documents" — it will call `search_documents` through the bridge.
+
+---
+
+### How Tool Discovery Works
+
+Once connected (either method), the protocol handshake is fully automatic:
+
+```
+Claude                          MCP Server                      Alfresco
+  │                                │                                │
+  │─── initialize ────────────────►│                                │
+  │◄── server info + capabilities ─│                                │
+  │                                │                                │
+  │─── tools/list ────────────────►│                                │
+  │◄── 5 tool definitions ────────│                                │
+  │    (with JSON schemas)         │                                │
+  │                                │                                │
+  │  User: "find budget reports"   │                                │
+  │                                │                                │
+  │─── tools/call ────────────────►│                                │
+  │    search_documents            │─── POST /search ──────────────►│
+  │    { query: "budget report" }  │◄── search results ────────────│
+  │◄── structured result ─────────│                                │
+  │                                │                                │
+  │  Claude presents results       │                                │
+```
+
+You do not need to tell Claude which tools exist — it discovers them automatically
+through the MCP handshake and uses their descriptions + input schemas to decide
+when and how to call them.
+
+---
+
+### Example Prompts
+
+Once connected, try these in Claude Code or Claude Desktop:
+
+- `Search Alfresco for budget reports`
+- `Show me what's in the shared folder`
+- `Get the content of document <nodeId> and summarize it`
+- `Upload these meeting notes to my home folder`
+- `What metadata does document <nodeId> have?`
+- `List everything in the repository root`
+
+---
+
+### Troubleshooting
+
+**Claude Code shows the server as "failed":**
+
+1. Confirm the MCP server is running: `curl http://localhost:3000/mcp` should return JSON.
+2. Remove and re-add: `claude mcp remove alfresco-ecm` then re-run the `add` command.
+3. Check the MCP timeout — if the server is slow to start, set a longer timeout:
+   `MCP_TIMEOUT=15000 claude`
+
+**Claude Desktop hammer icon is missing:**
+
+1. Ensure `npx` is on your system PATH. Test manually in a terminal:
+   `npx mcp-remote@latest http://localhost:3000/mcp/sse`
+   — it should connect without errors.
+2. Validate your JSON config syntax (missing commas, mismatched brackets silently
+   disable all servers).
+3. Check Claude Desktop logs:
+   - macOS: `~/Library/Logs/Claude/mcp.log`
+   - Windows: `%APPDATA%\Claude\logs\mcp.log`
+
+**Tools appear but tool calls fail with Alfresco errors:**
+
+1. Verify Alfresco is reachable at the configured URL:
+   ```bash
+   curl -u admin:admin \
+     http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/-root-
+   ```
+2. Check credentials in `application.yml` match your Alfresco instance.
+3. Review MCP server logs (console output) for the full Alfresco API error message.
+
+**Tools appear but Claude never calls them:**
+
+Claude matches tools by their descriptions. Make sure your prompt relates to document
+management. Saying "find files about budgets" triggers `search_documents`; saying
+"tell me a joke" does not.
 
 ---
 
