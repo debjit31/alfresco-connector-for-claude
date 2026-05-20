@@ -23,20 +23,13 @@ import java.util.stream.Collectors;
  * Embedding provider backed by Ollama's <b>native</b> embed endpoint
  * ({@code POST /api/embed}), activated with {@code rag.embedding.provider=ollama}.
  *
- * <p>Uses the {@code nomic-embed-text} model, which was trained with task-type
- * prefixes. To get the documented +5-10% retrieval accuracy this provider
- * applies them transparently:
- * <ul>
- *   <li>{@link #embedBatch}/{@link #embedForIndexing} → {@code search_document: }
- *       (only ever called while indexing)</li>
- *   <li>{@link #embed} → {@code search_query: } (only ever called for a search
- *       query)</li>
- * </ul>
- * Because the prefix is chosen by which method is invoked, callers
- * (RagService) need no changes.
+ * <p>Supports any Ollama embedding model (nomic-embed-text, mxbai-embed-large,
+ * snowflake-arctic-embed, etc.). For models trained with task-type prefixes
+ * (nomic-embed-text), the {@code search_document:} / {@code search_query:}
+ * prefixes are applied automatically. Other models get raw text.</p>
  *
- * <p>nomic-embed-text always emits 768-dimensional vectors regardless of the
- * configured {@code rag.embedding.dimensions}.
+ * <p>Dimensions are read from {@code rag.embedding.dimensions} in config,
+ * allowing different models to be swapped without code changes.</p>
  */
 @Component
 @ConditionalOnProperty(name = "rag.embedding.provider", havingValue = "ollama")
@@ -44,20 +37,19 @@ public class OllamaEmbeddingProvider implements EmbeddingProvider {
 
     private static final Logger log = LoggerFactory.getLogger(OllamaEmbeddingProvider.class);
 
-    /** nomic-embed-text is fixed at 768 dimensions. */
-    private static final int DIMENSIONS = 768;
-
-    /** Prefixes nomic-embed-text was trained with. */
+    /** Prefixes that nomic-embed-text was trained with. */
     private static final String DOC_PREFIX = "search_document: ";
     private static final String QUERY_PREFIX = "search_query: ";
 
-    /** nomic-embed-text context is ~2048 tokens; truncate defensively. */
+    /** Truncate defensively to fit model context windows. */
     private static final int MAX_INPUT_CHARS = 8000;
 
     /** First-call model load in Ollama can take several seconds. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
 
     private final RagProperties.Embedding cfg;
+    private final int dimensions;
+    private final boolean usePrefixes;
     private final String baseUrl;
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
@@ -66,34 +58,40 @@ public class OllamaEmbeddingProvider implements EmbeddingProvider {
         this.cfg = props.getEmbedding();
         this.objectMapper = objectMapper;
         this.baseUrl = cfg.getOllamaBaseUrl();
+        this.dimensions = cfg.getDimensions();
+        // Only nomic-embed-text uses search_document:/search_query: prefixes
+        this.usePrefixes = cfg.getModel() != null
+                && cfg.getModel().toLowerCase().contains("nomic");
         this.webClient = WebClient.builder()
                 .baseUrl(baseUrl)
                 .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .build();
-        log.info("Ollama embedding provider active: model={}, dimensions={}, baseUrl={}",
-                cfg.getModel(), DIMENSIONS, baseUrl);
+        log.info("Ollama embedding provider active: model={}, dimensions={}, prefixes={}, baseUrl={}",
+                cfg.getModel(), dimensions, usePrefixes, baseUrl);
     }
 
-    /** Search-time embedding — query prefix. */
+    /** Search-time embedding — query prefix applied only for nomic models. */
     @Override
     public CompletableFuture<double[]> embed(String text) {
-        return embedRaw(List.of(QUERY_PREFIX + safe(text)))
-                .thenApply(list -> list.isEmpty() ? new double[DIMENSIONS] : list.get(0));
+        String input = usePrefixes ? (QUERY_PREFIX + safe(text)) : safe(text);
+        return embedRaw(List.of(input))
+                .thenApply(list -> list.isEmpty() ? new double[dimensions] : list.get(0));
     }
 
-    /** Index-time batch embedding — document prefix on every input. */
+    /** Index-time batch embedding — document prefix applied only for nomic models. */
     @Override
     public CompletableFuture<List<double[]>> embedBatch(List<String> texts) {
-        List<String> prefixed = texts.stream()
-                .map(t -> DOC_PREFIX + safe(t))
+        List<String> prepared = texts.stream()
+                .map(t -> usePrefixes ? (DOC_PREFIX + safe(t)) : safe(t))
                 .collect(Collectors.toList());
-        return embedRaw(prefixed);
+        return embedRaw(prepared);
     }
 
-    /** Index-time single embedding — document prefix. */
+    /** Index-time single embedding — document prefix applied only for nomic models. */
     public CompletableFuture<double[]> embedForIndexing(String text) {
-        return embedRaw(List.of(DOC_PREFIX + safe(text)))
-                .thenApply(list -> list.isEmpty() ? new double[DIMENSIONS] : list.get(0));
+        String input = usePrefixes ? (DOC_PREFIX + safe(text)) : safe(text);
+        return embedRaw(List.of(input))
+                .thenApply(list -> list.isEmpty() ? new double[dimensions] : list.get(0));
     }
 
     // ── Ollama native call ──────────────────────────────────────────
@@ -171,7 +169,7 @@ public class OllamaEmbeddingProvider implements EmbeddingProvider {
 
     @Override
     public int getDimensions() {
-        return DIMENSIONS;
+        return dimensions;
     }
 
     @Override

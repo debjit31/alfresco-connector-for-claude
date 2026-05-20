@@ -103,17 +103,24 @@ Spring MVC handles async completion. Do not block these chains.
 
 ### RAG subsystem (`service/rag/`)
 
-Optional, in-process retrieval-augmented search. Gated at three levels so the rest of
-the app keeps working when it's off:
+Optional, in-process retrieval-augmented search implementing a **7-stage pipeline**
+matching the architecture diagram (`best_rag_pipeline_architecture.svg`):
+
+```
+INGESTION:  Extract (Tika) → Chunk → Embed → Dual Index (Vector + BM25)
+QUERY:      Expand → Hybrid Retrieve (Dense + BM25 + RRF) → Rerank → Return
+```
+
+Gated at three levels so the rest of the app keeps working when it's off:
 
 - `rag.enabled=true` (default, `matchIfMissing=true`) → `RagService` bean exists.
-- Each RAG tool / REST controller is `@ConditionalOnBean(RagService.class)`, so they
-  silently disappear from `tools/list` and Swagger when RAG is disabled.
+- Each RAG tool / REST controller is `@ConditionalOnBean(RagService.class)`.
 - Each provider/store implementation is `@ConditionalOnProperty` on its key.
 
-`RagService` orchestrates the pipeline `chunk → embed → store / query`. It implements
-the `RagExtension` interface (in `service/alfresco/`), which is the contract the rest
-of the app depends on. Three pluggable seams:
+`RagService` orchestrates the full pipeline. Three pluggable seams for ingestion,
+plus three new pluggable seams for retrieval:
+
+**Ingestion stages:**
 
 - **`DocumentChunker`** — two strategies via `rag.chunking.strategy`:
   `sliding_window` (fixed size with overlap, snapped to a sentence boundary in the
@@ -123,27 +130,41 @@ of the app depends on. Three pluggable seams:
   embedded.
 
 - **`EmbeddingProvider`** — selected by `rag.embedding.provider`:
-  - `local` (default) — `LocalEmbeddingProvider`, dependency-free TF-IDF feature
-    hashing into 768 dims. IDF is learned incrementally inside `embedBatch` (index
-    path) and **not** updated in `embed` (query path) — preserving this asymmetry is
-    important; otherwise query-only calls would skew IDF.
-  - `openai` — `OpenAiEmbeddingProvider`, single-request batch against an
-    OpenAI-compatible `/embeddings`. Dimensions come from config.
-  - `ollama` — `OllamaEmbeddingProvider`, native `POST /api/embed`. Hardcoded to 768
-    (nomic-embed-text). **Adds the `search_document: ` / `search_query: ` prefixes
-    automatically** based on which method is called (index vs. query path); callers
-    must not pre-prefix.
+  - `local` (default) — TF-IDF feature hashing into 768 dims.
+  - `openai` — single-request batch against `/embeddings`.
+  - `ollama` — native `POST /api/embed` with `search_document:` / `search_query:` prefixes.
 
-- **`VectorStore`** — currently only `InMemoryVectorStore` (`rag.vector-store.type=memory`).
-  Maintains a secondary `nodeId → chunkIds` index so per-document deletion is O(chunks
-  of that doc). Search is a parallel cosine-similarity scan with optional nodeId
-  filter; cosine helper degrades gracefully on mismatched dimensions / zero vectors.
+- **`VectorStore`** — dense vector index (`InMemoryVectorStore`). Maintains a
+  secondary `nodeId → chunkIds` index for O(chunks) deletion.
 
-- **`TextExtractor`** — Apache Tika `AutoDetectParser` wrapped to never throw
-  (failures log + return ""). 500K char write limit, and the write-limit signal is
-  detected by class-name match so it survives Tika version bumps. Used by both
-  `IndexDocumentTool` and `AlfrescoDocumentService.getDocument` to keep binary
-  documents (PDF/DOCX/PPTX/XLSX/legacy Office/RTF) from being read as UTF-8 garbage.
+- **`BM25Index`** — in-process Okapi BM25 keyword index (Stage 4b). Maintains
+  inverted index + per-document term frequencies. Indexed in lockstep with the
+  vector store during `indexChunks()`. Parameters: k1=1.2, b=0.75.
+
+**Query stages:**
+
+- **`QueryExpander`** (Stage 5) — generates multiple query variants to improve
+  recall. Techniques: synonym expansion, sub-query decomposition, HyDE-lite
+  (hypothetical answer fragment). Gated on `rag.query-expansion.enabled`.
+
+- **`HybridSearchEngine`** (Stage 6) — runs dense vector search + BM25 search in
+  parallel, then fuses results using **Reciprocal Rank Fusion** (RRF). The RRF
+  constant k (default 60) controls rank position weighting. Falls back to pure
+  vector search when `rag.search.hybrid-enabled=false`.
+
+- **`Reranker`** (Stage 7) — cross-encoder reranking of fused candidates:
+  - `none` (default) — `NoOpReranker`, pass-through.
+  - `ollama` — `OllamaReranker`, uses Ollama generate to score (query, passage)
+    pairs with bge-reranker-v2-m3. Activated with `rag.reranking.provider=ollama`.
+
+**Pipeline degradation:** each stage is independently toggleable. Turning off hybrid
+search leaves pure vector cosine. Turning off reranking passes RRF results through.
+Turning off query expansion uses the original query only. This means the pipeline
+works end-to-end with zero external dependencies (local embeddings + in-memory store
++ NoOp reranker + no expansion).
+
+- **`TextExtractor`** — Apache Tika `AutoDetectParser` wrapped to never throw.
+  Used by both `IndexDocumentTool` and `AlfrescoDocumentService.getDocument`.
 
 **Single-instance constraint:** the SSE session map *and* the in-memory vector store
 both live only in this JVM. As written the server is not horizontally scalable — RAG

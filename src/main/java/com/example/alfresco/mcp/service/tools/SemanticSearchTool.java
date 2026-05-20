@@ -48,21 +48,22 @@ public class SemanticSearchTool implements McpTool {
     public ToolDefinition getDefinition() {
         Map<String, PropertyDef> props = new LinkedHashMap<>();
         props.put("query", new PropertyDef("string",
-                "Natural-language query; results are ranked by semantic similarity"));
+                "Natural-language query; results are ranked by hybrid semantic + keyword relevance"));
         props.put("topK", new PropertyDef("integer",
                 "Number of results to return, 1-20 (default: 5)", 5));
         props.put("nodeIds", new PropertyDef("string",
                 "Optional comma-separated Alfresco node IDs to restrict the search to"));
         props.put("minScore", new PropertyDef("number",
-                "Minimum similarity score (0.0-1.0) a hit must reach (default: 0.1)", 0.1));
+                "Minimum relevance score a hit must reach (default: 0.0)", 0.0));
 
         InputSchema schema = new InputSchema(props, List.of("query"));
 
         return new ToolDefinition(
                 getName(),
-                "Search previously indexed Alfresco documents by meaning rather than exact " +
-                "keywords. Documents must first be indexed with index_document. Returns " +
-                "ranked chunks with similarity scores and source document metadata.",
+                "Search previously indexed Alfresco documents using a 7-stage hybrid RAG " +
+                "pipeline: query expansion → dense vector search + BM25 keyword search → " +
+                "Reciprocal Rank Fusion → cross-encoder reranking. Documents must first be " +
+                "indexed with index_document. Returns ranked chunks with relevance scores.",
                 schema);
     }
 
@@ -78,7 +79,7 @@ public class SemanticSearchTool implements McpTool {
         topK = Math.max(1, Math.min(topK, 20));
 
         double minScore = arguments.has("minScore")
-                ? arguments.get("minScore").asDouble(0.1) : 0.1;
+                ? arguments.get("minScore").asDouble(0.0) : 0.0;
 
         Set<String> nodeIds = parseNodeIds(getRequiredString(arguments, "nodeIds"));
 

@@ -113,7 +113,11 @@ public class McpDispatcher {
                 "This MCP server connects to an Alfresco ECM repository. " +
                 "You can search for documents, retrieve document content and metadata, " +
                 "upload new documents, and browse folders. Use search_documents first " +
-                "to find documents, then get_document or get_metadata for details.");
+                "to find documents, then get_document or get_metadata for details. " +
+                "For semantic search: use index_document to index documents into the " +
+                "vector store, then semantic_search to find documents by meaning using " +
+                "the hybrid RAG pipeline (dense vectors + BM25 keywords + reranking). " +
+                "Use index_status to check what is indexed.");
 
         log.info("MCP initialize completed for client: {}",
                  params != null ? params.path("clientInfo").path("name").asText("unknown") : "unknown");

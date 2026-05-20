@@ -152,11 +152,11 @@ public class RagToolsRestController {
     // ═══════════════════════════════════════════════════════════════
 
     @Operation(
-            summary = "Semantic search over indexed documents",
+            summary = "Hybrid semantic search over indexed documents",
             description = """
-                    Embed a natural-language query and return the most similar indexed
-                    document chunks, ranked by cosine similarity. Documents must be indexed
-                    first via `/api/tools/index_document`.
+                    Runs the full 7-stage RAG pipeline: query expansion → dense vector
+                    search + BM25 keyword search → Reciprocal Rank Fusion → cross-encoder
+                    reranking. Documents must be indexed first via `/api/tools/index_document`.
                     """
     )
     @ApiResponses({

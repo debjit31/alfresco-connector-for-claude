@@ -15,7 +15,7 @@ alfresco:
   rest-api-path: /api/-default-/public/alfresco/versions/1
   search-api-path: /api/-default-/public/search/versions/1
   auth:
-    type: basic                 # basic | oauth2 (extensible)
+    type: basic                 # basic | ticket | oauth2
     username: admin
     password: admin
   client:
@@ -45,11 +45,36 @@ rag:
     ollama-base-url: http://localhost:11434
     api-base-url: https://api.openai.com/v1
     api-key: ""
-    model: nomic-embed-text
-    dimensions: 768
+    model: mxbai-embed-large      # upgraded from nomic-embed-text for ~10% better retrieval
+    dimensions: 1024               # mxbai-embed-large outputs 1024d vectors
   vector-store:
-    type: memory                  # memory
-    max-vectors: 100000
+    type: memory                  # memory | qdrant
+    max-vectors: 100000           # memory store only
+    qdrant-url: http://localhost:6333
+    qdrant-api-key: ""            # for Qdrant Cloud (leave blank for local)
+    qdrant-collection: alfresco_chunks
+    qdrant-timeout-ms: 10000
+
+  # ── Hybrid search (Stage 6: Dense + BM25 + RRF) ──────────────────
+  search:
+    hybrid-enabled: true          # false = pure vector search only
+    semantic-top-k: 20            # candidates from dense vector index
+    lexical-top-k: 20             # candidates from BM25 keyword index
+    rrf-k: 60                     # RRF constant (standard: 60)
+
+  # ── Cross-encoder reranking (Stage 7) ─────────────────────────────
+  reranking:
+    enabled: true
+    provider: ollama              # none | ollama — now using cross-encoder reranking
+    model: bge-reranker-v2-m3     # Ollama reranking model
+    ollama-base-url: http://localhost:11434
+    top-k-before-rerank: 20       # how many candidates to rerank
+    timeout-ms: 30000
+
+  # ── Query expansion (Stage 5: synonym + HyDE-lite) ───────────────
+  query-expansion:
+    enabled: true                 # synonym expansion + HyDE-lite
+    variants: 3                   # max query variants (including original)
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging:
