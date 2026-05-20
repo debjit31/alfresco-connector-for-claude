@@ -32,6 +32,25 @@ mcp:
     version: 1.0.0
     description: "MCP server exposing Alfresco ECM capabilities as AI-callable tools"
 
+# ── RAG / semantic search ───────────────────────────────────────────
+rag:
+  enabled: true
+  chunking:
+    chunk-size: 1000
+    chunk-overlap: 200
+    min-chunk-size: 50
+    strategy: sliding_window      # sliding_window | paragraph
+  embedding:
+    provider: ollama              # local | openai | ollama
+    ollama-base-url: http://localhost:11434
+    api-base-url: https://api.openai.com/v1
+    api-key: ""
+    model: nomic-embed-text
+    dimensions: 768
+  vector-store:
+    type: memory                  # memory
+    max-vectors: 100000
+
 # ── Logging ──────────────────────────────────────────────────────────
 logging:
   level:

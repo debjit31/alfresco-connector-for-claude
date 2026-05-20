@@ -69,7 +69,9 @@ public class OpenApiConfig {
                         new Tag().name("Tools — Documents")
                                 .description("Retrieve, upload, and inspect documents"),
                         new Tag().name("Tools — Folders")
-                                .description("Browse folder contents in the repository")
+                                .description("Browse folder contents in the repository"),
+                        new Tag().name("Tools — RAG")
+                                .description("Semantic search: index documents into vectors and search by meaning")
                 ));
     }
 

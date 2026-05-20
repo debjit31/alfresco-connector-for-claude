@@ -1,6 +1,7 @@
 package com.example.alfresco.mcp.service.alfresco;
 
 import com.example.alfresco.mcp.client.AlfrescoRestClient;
+import com.example.alfresco.mcp.service.rag.TextExtractor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -23,10 +24,14 @@ public class AlfrescoDocumentService {
 
     private final AlfrescoRestClient client;
     private final ObjectMapper mapper;
+    private final TextExtractor textExtractor;
 
-    public AlfrescoDocumentService(AlfrescoRestClient client, ObjectMapper mapper) {
+    public AlfrescoDocumentService(AlfrescoRestClient client,
+                                   ObjectMapper mapper,
+                                   TextExtractor textExtractor) {
         this.client = client;
         this.mapper = mapper;
+        this.textExtractor = textExtractor;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -110,19 +115,34 @@ public class AlfrescoDocumentService {
         CompletableFuture<JsonNode> metaFuture = client.getNode(nodeId);
 
         if (includeContent) {
-            CompletableFuture<String> contentFuture = client.getContent(nodeId);
-            return metaFuture.thenCombine(contentFuture, (meta, content) -> {
+            // Fetch metadata first so the MIME type drives how content is
+            // read: binary formats (DOCX/PDF/…) go through Tika, text reads
+            // directly as a UTF-8 string.
+            return metaFuture.thenCompose(meta -> {
                 Map<String, Object> result = normalizeNodeInfo(meta);
-                // Truncate content to 50KB to avoid overwhelming Claude's context
-                if (content.length() > 50_000) {
-                    result.put("content", content.substring(0, 50_000));
-                    result.put("contentTruncated", true);
-                    result.put("fullContentLength", content.length());
+                String mimeType = meta.path("entry").path("content").path("mimeType").asText(null);
+
+                CompletableFuture<String> contentFuture;
+                if (textExtractor.isBinaryFormat(mimeType)) {
+                    contentFuture = client.getContentBytes(nodeId)
+                            .thenApply(bytes -> textExtractor.extractText(bytes, mimeType));
                 } else {
-                    result.put("content", content);
-                    result.put("contentTruncated", false);
+                    contentFuture = client.getContent(nodeId);
                 }
-                return result;
+
+                return contentFuture.thenApply(content -> {
+                    if (content == null) content = "";
+                    // Truncate content to 50KB to avoid overwhelming Claude's context
+                    if (content.length() > 50_000) {
+                        result.put("content", content.substring(0, 50_000));
+                        result.put("contentTruncated", true);
+                        result.put("fullContentLength", content.length());
+                    } else {
+                        result.put("content", content);
+                        result.put("contentTruncated", false);
+                    }
+                    return result;
+                });
             });
         }
 
