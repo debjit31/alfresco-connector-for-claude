@@ -1,0 +1,87 @@
+name: Release and Push Docker Image
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ github.repository }}
+  # ── Change this version before pushing to trigger a new release ──
+  RELEASE_VERSION: '1.0.0'
+
+jobs:
+  release-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if tag already exists
+        id: tag_check
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/v${{ env.RELEASE_VERSION }}$"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.tag_check.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Configure Git
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Maven Release – prepare & perform
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          SCM_URL="scm:git:https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          mvn -B release:prepare \
+            -DreleaseVersion=${{ env.RELEASE_VERSION }} \
+            -Dtag=v${{ env.RELEASE_VERSION }} \
+            -Dproject.scm.developerConnection="${SCM_URL}" \
+            -Darguments="-DskipTests"
+          mvn -B release:perform \
+            -Darguments="-DskipTests"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: steps.tag_check.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: steps.tag_check.outputs.exists == 'false'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        if: steps.tag_check.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Skip notice
+        if: steps.tag_check.outputs.exists == 'true'
+        run: echo "::notice::Tag v${{ env.RELEASE_VERSION }} already exists – skipping release. Bump RELEASE_VERSION in ci.yml to create a new release."
