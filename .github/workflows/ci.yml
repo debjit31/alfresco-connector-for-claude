@@ -8,7 +8,7 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: ${{ github.repository }}
   # ── Change this version before pushing to trigger a new release ──
-  RELEASE_VERSION: '1.0.0'
+  RELEASE_VERSION: '2.0.0'
 
 jobs:
   release-and-push:

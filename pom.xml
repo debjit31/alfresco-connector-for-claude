@@ -110,6 +110,8 @@
                     <autoVersionSubmodules>true</autoVersionSubmodules>
                     <pushChanges>true</pushChanges>
                     <scmCommentPrefix>[release] </scmCommentPrefix>
+                    <!-- Skip deploy – artifact is distributed via Docker image, not a Maven repo -->
+                    <goals>verify</goals>
                 </configuration>
             </plugin>
             <plugin>
